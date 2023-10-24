@@ -135,16 +135,19 @@ class LinkedInScraper(BaseScraper):
         company_link: str = company_section["href"]  # type: ignore
         company = Company(name=company_name, link=company_link)
 
+        city = None
+        region = None
+        country = Country.WORLDWIDE
         location_section = raw_job.find("span", class_="job-search-card__location")
-        location_str = location_section.text.split(",")
-        if len(location_str) < 3:
-            city, region = location_str
-            country = Country.WORLDWIDE
-        else:
-            city, region, country_str = location_str
-            country = Country.from_alias(country_str.strip().lower())
-        city = city.strip().lower()
-        region = region if region.isupper() else region.strip().lower()
+        location_parts = location_section.text.split(",")
+        location_parts_len = len(location_parts)
+        if location_parts_len >= 1:
+            location_parts[0].strip().lower()
+        if location_parts_len >= 2:
+            region = location_parts[1].strip()
+            region = region if region.isupper() else region.lower()
+        if location_parts_len >= 3:
+            country = Country.from_alias(location_parts[2].strip().lower())
         location = Location(city=city, region=region, country=country)
 
         details = await self.get_job_details(link)
