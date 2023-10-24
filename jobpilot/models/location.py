@@ -86,8 +86,10 @@ for country in Country:
 
 class Location(BaseModel):
     country: Country
-    city: str
-    region: str
+    city: str | None
+    region: str | None
 
     def __str__(self) -> str:
-        return f"{self.city}, {self.region}, {self.country.value[0]}"
+        city = f"{self.city}, " if self.city else ""
+        region = f"{self.region}, " if self.region else ""
+        return f"{city}{region}{self.country.value[0]}"
