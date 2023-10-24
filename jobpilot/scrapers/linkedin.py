@@ -231,17 +231,26 @@ class LinkedInScraper(BaseScraper):
             description = description_section.text.strip()
 
         criteria_sections = soup.find_all(
-            "span",
-            class_="description__job-criteria-text",
+            "li",
+            class_="description__job-criteria-item",
         )
-        seniority_level = (
-            criteria_sections[0].text.replace("-", "").replace(" ", "").strip().lower()
-        )
-        employment_type = EmploymentType.from_alias(
-            criteria_sections[1].text.replace("-", "").replace(" ", "").strip().lower(),
-        )
-        job_function = criteria_sections[2].text.strip().lower()
-        industries = criteria_sections[3].text.strip().lower()
+
+        for criteria_section in criteria_sections:
+            criteria_title = criteria_section.h3.get_text(strip=True)
+            criteria_value = criteria_section.span.text.strip().lower()
+            match criteria_title:
+                case "Seniority level":
+                    seniority_level = criteria_value.replace("-", "").replace(" ", "")
+                case "Employment type":
+                    employment_type = EmploymentType.from_alias(
+                        criteria_value.replace("-", "").replace(" ", ""),
+                    )
+                case "Job function":
+                    job_function = criteria_value
+                case "Industries":
+                    industries = criteria_value
+                case _:
+                    pass
 
         return JobDetails(
             description=description,
