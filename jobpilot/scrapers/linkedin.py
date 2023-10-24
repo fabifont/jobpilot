@@ -18,7 +18,7 @@ import asyncio
 
 from aiolimiter import AsyncLimiter
 from bs4 import Tag
-from httpx import HTTPStatusError
+from httpx import ConnectTimeout, HTTPStatusError, TimeoutException
 
 from jobpilot.models import Company, Country, EmploymentType, Job, JobDetails, Location
 
@@ -41,9 +41,13 @@ class LinkedInScraper(BaseScraper):
     RETRY_DELAY = 5
     RESULTS_PER_PAGE = 25
 
-    def __init__(self) -> None:
+    def __init__(self, scrape_job_details: bool = True) -> None:
         super().__init__()
-        self.__limiter = AsyncLimiter(5, 8)
+        self.__scrape_job_details = scrape_job_details
+        self.__job_listings_limiter = AsyncLimiter(4, 9)
+        self.__job_details_limiter = AsyncLimiter(4, 9)
+        self.__scrape_jobs_tasks: list[asyncio.Task[list[Job]]] = []
+        self.__scrape_details_tasks: list[asyncio.Task[JobDetails | None]] = []
 
     async def scrape(self, scraper_input: ScraperInput) -> list[Job]:
         params = {
@@ -60,47 +64,42 @@ class LinkedInScraper(BaseScraper):
         while start < limit:
             params["start"] = start
             try:
-                await self.__limiter.acquire()
+                await self.__job_listings_limiter.acquire()
                 logger.info(f"getting jobs for {params}")
                 response = await self._client.get(
                     url=self.LINKEDIN_SEARCH_URL,
                     params=params,
                     follow_redirects=True,
+                    timeout=10,
                 )
                 response.raise_for_status()
-
-                new_jobs = await self.parse(response)
-                if not new_jobs:
-                    break
-                logger.info(f"successfully parsed {len(new_jobs)} jobs")
-                jobs += new_jobs
-
+                self.__scrape_jobs_tasks.append(
+                    asyncio.create_task(self.parse(response)),
+                )
                 start += self.RESULTS_PER_PAGE
                 retries = 0
-            except HTTPStatusError as e:
-                if e.response.status_code == 429:
-                    self._waiting = True
-                    retries += 1
-                    if retries > self.MAX_RETRIES:
-                        break
-
-                    wait_time = int(
-                        e.response.headers.get("Retry-After", self.RETRY_DELAY),
-                    )
-                    # synchronized sleep to avoid flooding
-                    sleep(wait_time)  # noqa: ASYNC101
-                else:
-                    msg = (
-                        "not explicitly handled HTTP exception occurred; please open an"
-                        " issue"
-                    )
-                    logger.error(msg)
-                    raise
+            except (HTTPStatusError, ConnectTimeout, TimeoutException):
+                msg = f"rate limited while getting jobs for {params}"
+                logger.warning(msg)
+                retries += 1
+                if retries > self.MAX_RETRIES:
+                    break
+                # synchronized sleep to avoid flooding
+                sleep(self.RETRY_DELAY)  # noqa: ASYNC101
             # useful to check for not explicitly handled exceptions
-            except Exception:
+            except Exception as e:
                 msg = "not explicitly handled exception occurred; please open an issue"
                 logger.error(msg)
+                logger.exception(e)
                 raise
+
+        for task in self.__scrape_jobs_tasks:
+            jobs += await task
+
+        if self.__scrape_job_details:
+            for task in self.__scrape_details_tasks:
+                await task
+
         logger.info(f"successfully scraped {len(jobs)} jobs")
         return jobs
 
@@ -110,9 +109,11 @@ class LinkedInScraper(BaseScraper):
         if not raw_jobs:
             return []
         logger.info(f"gathering {len(raw_jobs)} job parse requests")
-        return await asyncio.gather(
+        jobs = await asyncio.gather(
             *(self.parse_job(raw_job) for raw_job in raw_jobs),
         )
+        logger.info(f"successfully parsed {len(jobs)} jobs")
+        return jobs
 
     async def parse_job(self, raw_job: Tag) -> Job:
         title_section = raw_job.find("a", class_="base-card__full-link")
@@ -135,32 +136,36 @@ class LinkedInScraper(BaseScraper):
         company_link: str = company_section["href"]  # type: ignore
         company = Company(name=company_name, link=company_link)
 
-        city = None
-        region = None
-        country = Country.WORLDWIDE
         location_section = raw_job.find("span", class_="job-search-card__location")
         location_parts = location_section.text.split(",")
         location_parts_len = len(location_parts)
-        if location_parts_len >= 1:
-            location_parts[0].strip().lower()
+        city = location_parts[0].strip().lower() if location_parts_len >= 1 else None
         if location_parts_len >= 2:
             region = location_parts[1].strip()
             region = region if region.isupper() else region.lower()
+        else:
+            region = None
         if location_parts_len >= 3:
             country = Country.from_alias(location_parts[2].strip().lower())
+        else:
+            country = Country.WORLDWIDE
         location = Location(city=city, region=region, country=country)
 
-        details = await self.get_job_details(link)
-
-        return Job(
+        job = Job(
             title=title,
             link=link,
             company=company,
             location=location,
-            details=details,
         )
 
-    async def get_job_details(self, link: str) -> JobDetails | None:
+        if self.__scrape_job_details:
+            self.__scrape_details_tasks.append(
+                asyncio.create_task(self.get_job_details(job)),
+            )
+
+        return job
+
+    async def get_job_details(self, job: Job) -> JobDetails | None:
         params = {
             "_l": "en_US",
         }
@@ -169,46 +174,41 @@ class LinkedInScraper(BaseScraper):
 
         while retries < self.MAX_RETRIES:
             try:
-                await self.__limiter.acquire()
-                logger.info(f"getting job details from {link}")
+                await self.__job_details_limiter.acquire()
+                logger.info(f"getting job details from {job.link}")
                 response = await self._client.get(
-                    link,
+                    job.link,
                     params=params,
                     follow_redirects=True,
+                    timeout=10,
                 )
                 response.raise_for_status()
                 job_details = self.parse_job_details(response)
-            except HTTPStatusError as e:  # noqa: PERF203
-                if e.response.status_code == 429 or e.response.status_code == 500:
-                    retries += 1
-                    if retries > self.MAX_RETRIES:
-                        msg = "Too many retries"
-                        raise LinkedInError(msg) from e
-
-                    wait_time = int(
-                        e.response.headers.get("Retry-After", self.RETRY_DELAY),
-                    )
-                    # synchronized sleep to avoid flooding
-                    sleep(wait_time)  # noqa: ASYNC101
-                else:
-                    msg = (
-                        "not explicitly handled HTTP exception occurred; please open an"
-                        " issue"
-                    )
-                    logger.error(msg)
-                    raise
-            except LinkedInBadPageError:
+            except (  # noqa: PERF203
+                HTTPStatusError,
+                ConnectTimeout,
+                TimeoutException,
+                LinkedInBadPageError,
+            ):
+                msg = f"rate limited while getting job details from {job.link}"
+                logger.warning(msg)
+                retries += 1
+                if retries > self.MAX_RETRIES:
+                    break
+                # synchronized sleep to avoid flooding
                 sleep(self.RETRY_DELAY)  # noqa: ASYNC101
             # useful to check for not explicitly handled exceptions
-            except Exception:
+            except Exception as e:
                 msg = "not explicitly handled exception occurred; please open an issue"
                 logger.error(msg)
+                logger.exception(e)
                 raise
             else:
-                logger.info(f"successfully parsed job details from {link}")
+                logger.info(f"successfully parsed job details from {job.link}")
+                job.details = job_details
                 return job_details
-        msg = "couldn't get job details"
-        logger.error(msg)
+        msg = f"can't get job details from {job.link}"
+        logger.warning(msg)
         return job_details
 
     def parse_job_details(self, response: Response) -> JobDetails:
