@@ -135,16 +135,19 @@ class LinkedInScraper(BaseScraper):
         company_link: str = company_section["href"]  # type: ignore
         company = Company(name=company_name, link=company_link)
 
+        city = None
+        region = None
+        country = Country.WORLDWIDE
         location_section = raw_job.find("span", class_="job-search-card__location")
-        location_str = location_section.text.split(",")
-        if len(location_str) < 3:
-            city, region = location_str
-            country = Country.WORLDWIDE
-        else:
-            city, region, country_str = location_str
-            country = Country.from_alias(country_str.strip().lower())
-        city = city.strip().lower()
-        region = region if region.isupper() else region.strip().lower()
+        location_parts = location_section.text.split(",")
+        location_parts_len = len(location_parts)
+        if location_parts_len >= 1:
+            location_parts[0].strip().lower()
+        if location_parts_len >= 2:
+            region = location_parts[1].strip()
+            region = region if region.isupper() else region.lower()
+        if location_parts_len >= 3:
+            country = Country.from_alias(location_parts[2].strip().lower())
         location = Location(city=city, region=region, country=country)
 
         details = await self.get_job_details(link)
@@ -228,17 +231,26 @@ class LinkedInScraper(BaseScraper):
             description = description_section.text.strip()
 
         criteria_sections = soup.find_all(
-            "span",
-            class_="description__job-criteria-text",
+            "li",
+            class_="description__job-criteria-item",
         )
-        seniority_level = (
-            criteria_sections[0].text.replace("-", "").replace(" ", "").strip().lower()
-        )
-        employment_type = EmploymentType.from_alias(
-            criteria_sections[1].text.replace("-", "").replace(" ", "").strip().lower(),
-        )
-        job_function = criteria_sections[2].text.strip().lower()
-        industries = criteria_sections[3].text.strip().lower()
+
+        for criteria_section in criteria_sections:
+            criteria_title = criteria_section.h3.get_text(strip=True)
+            criteria_value = criteria_section.span.text.strip().lower()
+            match criteria_title:
+                case "Seniority level":
+                    seniority_level = criteria_value.replace("-", "").replace(" ", "")
+                case "Employment type":
+                    employment_type = EmploymentType.from_alias(
+                        criteria_value.replace("-", "").replace(" ", ""),
+                    )
+                case "Job function":
+                    job_function = criteria_value
+                case "Industries":
+                    industries = criteria_value
+                case _:
+                    pass
 
         return JobDetails(
             description=description,

@@ -49,11 +49,12 @@ class EmploymentType(Enum):
         "praktikum",
         "praktik",
     )
-    PER_DIEM = "perdiem"
-    NIGHTS = "nights"
-    OTHER = "other"
-    SUMMER = "summer"
-    VOLUNTEER = "volunteer"
+    PER_DIEM = ("perdiem",)
+    NIGHTS = ("nights",)
+    OTHER = ("other",)
+    SUMMER = ("summer",)
+    VOLUNTEER = ("volunteer",)
+    SELFEMPLOYED = ("contract",)
 
     @staticmethod
     def from_alias(alias: str) -> EmploymentType:
