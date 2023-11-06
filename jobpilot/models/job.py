@@ -87,3 +87,6 @@ class Job(BaseModel):
     location: Location
     company: Company
     details: JobDetails | None = None
+
+    def __hash__(self) -> int:
+        return hash(self.link)

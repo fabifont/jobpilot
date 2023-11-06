@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 
 class Country(Enum):
+    AUSTRIA = ("austria", "at")
     BAHRAIN = ("bahrain", "bh")
     BELGIUM = ("belgium", "be")
     BRAZIL = ("brazil", "br")
@@ -93,3 +94,6 @@ class Location(BaseModel):
         city = f"{self.city}, " if self.city else ""
         region = f"{self.region}, " if self.region else ""
         return f"{city}{region}{self.country.value[0]}"
+
+    def __hash__(self) -> int:
+        return hash(str(self))

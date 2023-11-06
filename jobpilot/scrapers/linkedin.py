@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from time import sleep
 from typing import TYPE_CHECKING
 
 from bs4 import BeautifulSoup
@@ -132,8 +131,7 @@ class LinkedInScraper(BaseScraper):
                 msg = f"rate limited while getting jobs for {params}"
                 logger.warning(msg)
 
-                # synchronized sleep to avoid flooding
-                sleep(self.RETRY_DELAY)  # noqa: ASYNC101
+                await asyncio.sleep(self.RETRY_DELAY * retries)
                 retries += 1
             except Exception as e:
                 msg = "not explicitly handled exception occurred; please open an issue"
@@ -197,12 +195,21 @@ class LinkedInScraper(BaseScraper):
         location_parts_len = len(location_parts)
 
         if location_parts_len >= 1:
-            location_parts[0].strip().lower()
+            possible_country = location_parts[-1].strip().lower()
+            try:
+                country = Country.from_alias(possible_country)
+            except ValueError:
+                logger.warning(f"expecting a country but got {country}")
+                # check if it's a city
+                if "metropolitan area" in possible_country:
+                    city = possible_country.split()[1]
+                else:
+                    raise
         if location_parts_len >= 2:
-            region = location_parts[1].strip()
+            region = location_parts[-2].strip()
             region = region if region.isupper() else region.lower()
         if location_parts_len >= 3:
-            country = Country.from_alias(location_parts[2].strip().lower())
+            city = location_parts[-3].strip().lower()
 
         location = Location(city=city, region=region, country=country)
 
@@ -250,8 +257,7 @@ class LinkedInScraper(BaseScraper):
                 msg = f"rate limited while getting job details from {job.link}"
                 logger.warning(msg)
 
-                # synchronized sleep to avoid flooding
-                sleep(self.RETRY_DELAY)  # noqa: ASYNC101
+                await asyncio.sleep(self.RETRY_DELAY * retries)
                 retries += 1
             except Exception as e:
                 msg = "not explicitly handled exception occurred; please open an issue"
