@@ -13,11 +13,10 @@ if TYPE_CHECKING:
 class ScraperInput(BaseModel):
     keywords: str
     location: str
-    job_type: str = ""
     limit: int
 
     def __hash__(self) -> int:
-        return hash((self.keywords, self.location, self.job_type, self.limit))
+        return hash((self.keywords, self.location, self.limit))
 
 
 class BaseScraper(ABC):
