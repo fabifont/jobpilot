@@ -122,7 +122,7 @@ class LinkedInScraper(BaseScraper):
                 response.raise_for_status()
 
                 jobs = self.parse_jobs(response)
-            except (HTTPStatusError, ConnectTimeout, TimeoutException):  # noqa: PERF203
+            except (HTTPStatusError, ConnectTimeout, TimeoutException):
                 msg = f"rate limited while getting jobs for {params}"
                 logger.warning(msg)
 
@@ -244,7 +244,7 @@ class LinkedInScraper(BaseScraper):
                 response.raise_for_status()
 
                 job_details = self.parse_job_details(response)
-            except (  # noqa: PERF203
+            except (
                 HTTPStatusError,
                 ConnectTimeout,
                 TimeoutException,
