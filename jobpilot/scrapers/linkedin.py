@@ -197,11 +197,9 @@ class LinkedInScraper(BaseScraper):
                 country = Country.from_alias(possible_country)
             except ValueError:
                 logger.warning(f"expected a country but got {country}")
-                # check if it's a city
-                if "metropolitan area" in possible_country:
-                    city = possible_country.split()[1]
-                else:
-                    raise
+                # probably it's a weird likedin stuff like "metropolitan area"
+                # so let's assume it's a city
+                city = possible_country
         if location_parts_len >= 2:
             region = location_parts[-2].strip()
             region = region if region.isupper() else region.lower()
