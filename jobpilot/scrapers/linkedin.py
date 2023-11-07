@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from bs4 import BeautifulSoup
@@ -30,11 +31,6 @@ class LinkedInBadPageError(LinkedInError):
     pass
 
 
-class LinkedInNoMoreJobsError(LinkedInError):
-    def __init__(self, message: str = "no more jobs") -> None:
-        super().__init__(message)
-
-
 class LinkedInTooManyRetriesError(LinkedInError):
     def __init__(self, message: str = "too many retries") -> None:
         super().__init__(message)
@@ -55,7 +51,11 @@ class LinkedInScraper(BaseScraper):
         super().__init__()
         self.__limiter = AsyncLimiter(5, 8)
         self.__lock = asyncio.Lock()
-        self.__last_start_with_results = -self.START_LIMIT
+        self.__min_starts_without_results: dict[ScraperInput, int] = defaultdict(int)
+        self.__tasks: dict[ScraperInput, list[asyncio.Task[list[Job]]]] = defaultdict(
+            list,
+        )
+        self.__starts: dict[asyncio.Task[list[Job]], int] = defaultdict(int)
 
     async def scrape(
         self,
@@ -64,54 +64,49 @@ class LinkedInScraper(BaseScraper):
     ) -> list[Job]:
         # minimum between input limit and start limit
         limit = min(scraper_input.limit, self.START_LIMIT)
+        self.__min_starts_without_results[scraper_input] = limit
 
         # start all tasks to get job listings
-        tasks = [
-            asyncio.create_task(
-                self.get_jobs(scraper_input.keywords, scraper_input.location, start),
+        tasks: list[asyncio.Task[list[Job]]] = []
+        for start in range(0, limit, self.RESULTS_PER_PAGE):
+            task = asyncio.create_task(
+                self.get_jobs(scraper_input, start),
             )
-            for start in range(0, limit, self.RESULTS_PER_PAGE)
-        ]
+            tasks.append(task)
+            self.__starts[task] = start
 
-        # wait till first exception
-        # this is useful because linkedin will return 200 even if there are no more jobs
-        # so a LinkedInNoMoreJobsError is raised
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
-
-        # cancel pending tasks to avoid useless requests
-        for task in pending:
-            task.cancel()
+        self.__tasks[scraper_input] += tasks
 
         jobs: list[Job] = []
 
-        # get results from done tasks
-        for task in done:
-            task_exception = task.exception()
-            # raise exception if not a LinkedInNoMoreJobsError
-            # otherwise add scraped jobs to list
-            if task_exception:
-                if not isinstance(task_exception, LinkedInNoMoreJobsError):
-                    raise task_exception
-            else:
-                jobs += task.result()
+        # starting all tasks from 0 to limit
+        # if there are no results for a start all tasks with a greater start are deleted
+        # this is done to avoid useless requests
+        # cancelled tasks will raise a CancelledError which is returned by gather
+        # and ignored
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                continue
+            if isinstance(result, BaseException):
+                raise result
+            jobs += result
 
-        # fill job details if requested
         if job_details:
             await self.fill_jobs_details(jobs)
 
         return jobs
 
-    async def get_jobs(self, keywords: str, location: str, start: int) -> list[Job]:
+    async def get_jobs(self, scraper_input: ScraperInput, start: int) -> list[Job]:
         params = {
-            "keywords": keywords,
-            "location": location,
+            "keywords": scraper_input.keywords,
+            "location": scraper_input.location,
             "pageNum": 0,
             "_l": "en_US",
             "start": start,
         }
-        retries = 0
 
-        while retries < self.MAX_RETRIES:
+        for retry in range(1, self.MAX_RETRIES + 1):
             try:
                 # wait for a free slot in the limiter
                 await self.__limiter.acquire()
@@ -127,12 +122,11 @@ class LinkedInScraper(BaseScraper):
                 response.raise_for_status()
 
                 jobs = self.parse_jobs(response)
-            except (HTTPStatusError, ConnectTimeout, TimeoutException):  # noqa: PERF203
+            except (HTTPStatusError, ConnectTimeout, TimeoutException):
                 msg = f"rate limited while getting jobs for {params}"
                 logger.warning(msg)
 
-                await asyncio.sleep(self.RETRY_DELAY * retries)
-                retries += 1
+                await asyncio.sleep(self.RETRY_DELAY * retry)
             except Exception as e:
                 msg = "not explicitly handled exception occurred; please open an issue"
                 logger.error(msg)
@@ -143,15 +137,18 @@ class LinkedInScraper(BaseScraper):
 
                 # check if there are no more jobs
                 async with self.__lock:
-                    if jobs:
-                        if start > self.__last_start_with_results:
-                            self.__last_start_with_results = start
-                    else:
-                        if (
-                            start
-                            == self.__last_start_with_results + self.RESULTS_PER_PAGE
-                        ):
-                            raise LinkedInNoMoreJobsError
+                    if (
+                        not jobs
+                        and start < self.__min_starts_without_results[scraper_input]
+                    ):
+                        self.__min_starts_without_results[scraper_input] = start
+                        for task in self.__tasks[scraper_input]:
+                            if (
+                                not task.done()
+                                and not task.cancelled()
+                                and self.__starts[task] > start
+                            ):
+                                task.cancel()
                 return jobs
         raise LinkedInTooManyRetriesError
 
@@ -180,7 +177,7 @@ class LinkedInScraper(BaseScraper):
         )
 
         if not company_section or not company_section.has_attr("href"):  # type: ignore
-            msg = "Company name or link not found"
+            msg = "company name or link not found"
             raise LinkedInError(msg)
 
         company_name = company_section.text.strip().lower()
@@ -199,7 +196,7 @@ class LinkedInScraper(BaseScraper):
             try:
                 country = Country.from_alias(possible_country)
             except ValueError:
-                logger.warning(f"expecting a country but got {country}")
+                logger.warning(f"expected a country but got {country}")
                 # check if it's a city
                 if "metropolitan area" in possible_country:
                     city = possible_country.split()[1]
@@ -231,9 +228,8 @@ class LinkedInScraper(BaseScraper):
         params = {
             "_l": "en_US",
         }
-        retries = 0
 
-        while retries < self.MAX_RETRIES:
+        for retry in range(1, self.MAX_RETRIES + 1):
             try:
                 # wait for a free slot in the limiter
                 await self.__limiter.acquire()
@@ -248,7 +244,7 @@ class LinkedInScraper(BaseScraper):
                 response.raise_for_status()
 
                 job_details = self.parse_job_details(response)
-            except (  # noqa: PERF203
+            except (
                 HTTPStatusError,
                 ConnectTimeout,
                 TimeoutException,
@@ -257,8 +253,7 @@ class LinkedInScraper(BaseScraper):
                 msg = f"rate limited while getting job details from {job.link}"
                 logger.warning(msg)
 
-                await asyncio.sleep(self.RETRY_DELAY * retries)
-                retries += 1
+                await asyncio.sleep(self.RETRY_DELAY * retry)
             except Exception as e:
                 msg = "not explicitly handled exception occurred; please open an issue"
                 logger.error(msg)
@@ -288,7 +283,7 @@ class LinkedInScraper(BaseScraper):
         # when description is not found is because the page is not loaded correctly
         # this is another rate limit error
         if description_section is None:
-            msg = "Job description section not found"
+            msg = "job description section not found"
             raise LinkedInBadPageError(msg)
 
         if isinstance(description_section, Tag):

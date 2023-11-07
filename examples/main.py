@@ -11,7 +11,6 @@ jobpilot.enable_logging()
 scraper = LinkedInScraper()
 scraper_input = ScraperInput(
     location="italy",
-    job_type="internship",
     keywords="software engineer",
     limit=50,
 )
