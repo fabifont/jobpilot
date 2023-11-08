@@ -68,6 +68,8 @@ class LinkedInScraper(BaseScraper):
         limit = min(scraper_input.limit, self.START_LIMIT)
         self.__min_starts_without_results[scraper_input] = limit
 
+        jobs: list[Job] = []
+
         if concurrent:
             # start all tasks to get job listings
             tasks: list[asyncio.Task[list[Job]]] = []
@@ -79,8 +81,6 @@ class LinkedInScraper(BaseScraper):
                 self.__starts[task] = start
 
             self.__tasks[scraper_input] += tasks
-
-            jobs: list[Job] = []
 
             # starting all tasks from 0 to limit
             # if no results for a start all tasks with a greater start are deleted
@@ -95,7 +95,6 @@ class LinkedInScraper(BaseScraper):
                     raise result
                 jobs += result
         else:
-            jobs = []
             for start in range(0, limit, self.RESULTS_PER_PAGE):
                 jobs += await self.get_jobs(scraper_input, start, max_retries)
 
