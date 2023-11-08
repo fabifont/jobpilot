@@ -66,6 +66,7 @@ class Country(Enum):
     URUGUAY = ("uruguay", "uy")
     VENEZUELA = ("venezuela", "ve")
     VIETNAM = ("vietnam", "vn")
+    EUROPE = ("europe", "european economic area", "eu")
     WORLDWIDE = ("worldwide", "ww")
 
     @staticmethod
