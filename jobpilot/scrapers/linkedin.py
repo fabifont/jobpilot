@@ -18,7 +18,7 @@ import asyncio
 
 from aiolimiter import AsyncLimiter
 from bs4 import Tag
-from httpx import ConnectTimeout, HTTPStatusError, TimeoutException
+from httpx import ConnectError, ConnectTimeout, HTTPStatusError, TimeoutException
 
 from jobpilot.models import Company, Country, EmploymentType, Job, JobDetails, Location
 
@@ -61,43 +61,54 @@ class LinkedInScraper(BaseScraper):
         self,
         scraper_input: ScraperInput,
         job_details: bool = False,
+        concurrent: bool = True,
+        max_retries: int = MAX_RETRIES,
     ) -> list[Job]:
         # minimum between input limit and start limit
         limit = min(scraper_input.limit, self.START_LIMIT)
         self.__min_starts_without_results[scraper_input] = limit
 
-        # start all tasks to get job listings
-        tasks: list[asyncio.Task[list[Job]]] = []
-        for start in range(0, limit, self.RESULTS_PER_PAGE):
-            task = asyncio.create_task(
-                self.get_jobs(scraper_input, start),
-            )
-            tasks.append(task)
-            self.__starts[task] = start
-
-        self.__tasks[scraper_input] += tasks
-
         jobs: list[Job] = []
 
-        # starting all tasks from 0 to limit
-        # if there are no results for a start all tasks with a greater start are deleted
-        # this is done to avoid useless requests
-        # cancelled tasks will raise a CancelledError which is returned by gather
-        # and ignored
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for result in results:
-            if isinstance(result, asyncio.CancelledError):
-                continue
-            if isinstance(result, BaseException):
-                raise result
-            jobs += result
+        if concurrent:
+            # start all tasks to get job listings
+            tasks: list[asyncio.Task[list[Job]]] = []
+            for start in range(0, limit, self.RESULTS_PER_PAGE):
+                task = asyncio.create_task(
+                    self.get_jobs(scraper_input, start, max_retries),
+                )
+                tasks.append(task)
+                self.__starts[task] = start
+
+            self.__tasks[scraper_input] += tasks
+
+            # starting all tasks from 0 to limit
+            # if no results for a start all tasks with a greater start are deleted
+            # this is done to avoid useless requests
+            # cancelled tasks will raise a CancelledError which is returned by gather
+            # and ignored
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, asyncio.CancelledError):
+                    continue
+                if isinstance(result, BaseException):
+                    raise result
+                jobs += result
+        else:
+            for start in range(0, limit, self.RESULTS_PER_PAGE):
+                jobs += await self.get_jobs(scraper_input, start, max_retries)
 
         if job_details:
-            await self.fill_jobs_details(jobs)
+            await self.fill_jobs_details(jobs, concurrent, max_retries)
 
         return jobs
 
-    async def get_jobs(self, scraper_input: ScraperInput, start: int) -> list[Job]:
+    async def get_jobs(
+        self,
+        scraper_input: ScraperInput,
+        start: int,
+        max_retries: int = MAX_RETRIES,
+    ) -> list[Job]:
         params = {
             "keywords": scraper_input.keywords,
             "location": scraper_input.location,
@@ -106,7 +117,7 @@ class LinkedInScraper(BaseScraper):
             "start": start,
         }
 
-        for retry in range(1, self.MAX_RETRIES + 1):
+        for retry in range(1, max_retries + 1):
             try:
                 # wait for a free slot in the limiter
                 await self.__limiter.acquire()
@@ -122,7 +133,7 @@ class LinkedInScraper(BaseScraper):
                 response.raise_for_status()
 
                 jobs = self.parse_jobs(response)
-            except (HTTPStatusError, ConnectTimeout, TimeoutException):
+            except (HTTPStatusError, ConnectTimeout, TimeoutException, ConnectError):
                 msg = f"rate limited while getting jobs for {params}"
                 logger.warning(msg)
 
@@ -196,7 +207,7 @@ class LinkedInScraper(BaseScraper):
             try:
                 country = Country.from_alias(possible_country)
             except ValueError:
-                logger.warning(f"expected a country but got {country}")
+                logger.warning(f"expected a country but got {possible_country}")
                 # probably it's a weird likedin stuff like "metropolitan area"
                 # so let's assume it's a city
                 city = possible_country
@@ -215,19 +226,32 @@ class LinkedInScraper(BaseScraper):
             location=location,
         )
 
-    async def fill_jobs_details(self, jobs: list[Job]) -> list[Job]:
-        await asyncio.gather(
-            *[self.get_job_details(job) for job in jobs],
-        )
+    async def fill_jobs_details(
+        self,
+        jobs: list[Job],
+        concurrent: bool = True,
+        max_retries: int = MAX_RETRIES,
+    ) -> list[Job]:
+        if concurrent:
+            await asyncio.gather(
+                *[self.get_job_details(job, max_retries) for job in jobs],
+            )
+        else:
+            for job in jobs:
+                await self.get_job_details(job, max_retries)
 
         return jobs
 
-    async def get_job_details(self, job: Job) -> JobDetails:
+    async def get_job_details(
+        self,
+        job: Job,
+        max_retries: int = MAX_RETRIES,
+    ) -> JobDetails:
         params = {
             "_l": "en_US",
         }
 
-        for retry in range(1, self.MAX_RETRIES + 1):
+        for retry in range(1, max_retries + 1):
             try:
                 # wait for a free slot in the limiter
                 await self.__limiter.acquire()
@@ -247,6 +271,7 @@ class LinkedInScraper(BaseScraper):
                 ConnectTimeout,
                 TimeoutException,
                 LinkedInBadPageError,
+                ConnectError,
             ):
                 msg = f"rate limited while getting job details from {job.link}"
                 logger.warning(msg)
