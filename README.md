@@ -61,8 +61,6 @@ All contributors must adhere to these checks. Submitted code in pull requests mu
 
 Contributions to **jobpilot** are very welcome! Whether you're reporting bugs, enhancing documentation, or improving the code, every contribution helps.
 
-Sure! Based on the article you provided, here's the section discussing branches and commit naming conventions:
-
 ## Branching and commit naming conventions
 
 To ensure consistency and clarity across the codebase, **jobpilot** follows a simplified naming convention for branches and commits. The naming conventions are based on the concepts shared in this [article](https://dev.to/varbsan/a-simplified-convention-for-naming-branches-and-commits-in-git-il4).
