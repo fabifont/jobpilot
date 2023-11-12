@@ -53,9 +53,9 @@ class LinkedInScraper(BaseScraper):
     MAX_RETRIES = 5
     RETRY_DELAY = 5
 
-    def __init__(self) -> None:
+    def __init__(self, limiter_tasks: int = 5, limiter_seconds: int = 8) -> None:
         super().__init__()
-        self.__limiter = AsyncLimiter(5, 8)
+        self.__limiter = AsyncLimiter(limiter_tasks, limiter_seconds)
         self.__lock = asyncio.Lock()
         self.__min_starts_without_results: dict[ScraperInput, int] = defaultdict(int)
         self.__tasks: dict[ScraperInput, list[asyncio.Task[list[Job]]]] = defaultdict(
@@ -69,6 +69,7 @@ class LinkedInScraper(BaseScraper):
         job_details: bool = False,
         concurrent: bool = True,
         max_retries: int = MAX_RETRIES,
+        retry_delay: int = RETRY_DELAY,
     ) -> list[Job]:
         # minimum between input limit and start limit
         limit = min(scraper_input.limit, self.START_LIMIT)
@@ -102,10 +103,15 @@ class LinkedInScraper(BaseScraper):
                 jobs += result
         else:
             for start in range(0, limit, self.RESULTS_PER_PAGE):
-                jobs += await self.get_jobs(scraper_input, start, max_retries)
+                jobs += await self.get_jobs(
+                    scraper_input,
+                    start,
+                    max_retries,
+                    retry_delay,
+                )
 
         if job_details:
-            await self.fill_jobs_details(jobs, concurrent, max_retries)
+            await self.fill_jobs_details(jobs, concurrent, max_retries, retry_delay)
 
         return jobs
 
@@ -114,6 +120,7 @@ class LinkedInScraper(BaseScraper):
         scraper_input: ScraperInput,
         start: int,
         max_retries: int = MAX_RETRIES,
+        retry_delay: int = RETRY_DELAY,
     ) -> list[Job]:
         params = {
             "keywords": scraper_input.keywords,
@@ -144,13 +151,13 @@ class LinkedInScraper(BaseScraper):
                 msg = f"rate limited while getting jobs for {params}"
                 logger.warning(msg)
 
-                await asyncio.sleep(self.RETRY_DELAY * retry)
+                await asyncio.sleep(retry_delay * retry)
                 retry += 1
             except (ConnectError, ReadError):
                 msg = f"connection error while getting jobs for {params}"
                 logger.warning(msg)
 
-                await asyncio.sleep(self.RETRY_DELAY * retry)
+                await asyncio.sleep(retry_delay * retry)
                 retry += 1
             except Exception as e:
                 msg = "not explicitly handled exception occurred; please open an issue"
@@ -245,6 +252,7 @@ class LinkedInScraper(BaseScraper):
         jobs: list[Job],
         concurrent: bool = True,
         max_retries: int = MAX_RETRIES,
+        retry_delay: int = RETRY_DELAY,
     ) -> list[Job]:
         if concurrent:
             await asyncio.gather(
@@ -252,7 +260,7 @@ class LinkedInScraper(BaseScraper):
             )
         else:
             for job in jobs:
-                await self.get_job_details(job, max_retries)
+                await self.get_job_details(job, max_retries, retry_delay)
 
         return jobs
 
@@ -260,6 +268,7 @@ class LinkedInScraper(BaseScraper):
         self,
         job: Job,
         max_retries: int = MAX_RETRIES,
+        retry_delay: int = RETRY_DELAY,
     ) -> JobDetails:
         params = {
             "_l": "en_US",
@@ -290,13 +299,13 @@ class LinkedInScraper(BaseScraper):
                 msg = f"rate limited while getting job details from {job.link}"
                 logger.warning(msg)
 
-                await asyncio.sleep(self.RETRY_DELAY * retry)
+                await asyncio.sleep(retry_delay * retry)
                 retry += 1
             except (ConnectError, ReadError):
                 msg = f"connection error while getting job details from {job.link}"
                 logger.warning(msg)
 
-                await asyncio.sleep(self.RETRY_DELAY * retry)
+                await asyncio.sleep(retry_delay * retry)
                 retry += 1
             except Exception as e:
                 msg = "not explicitly handled exception occurred; please open an issue"
