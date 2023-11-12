@@ -18,7 +18,13 @@ import asyncio
 
 from aiolimiter import AsyncLimiter
 from bs4 import Tag
-from httpx import ConnectError, ConnectTimeout, HTTPStatusError, TimeoutException
+from httpx import (
+    ConnectError,
+    ConnectTimeout,
+    HTTPStatusError,
+    ReadError,
+    TimeoutException,
+)
 
 from jobpilot.models import Company, Country, EmploymentType, Job, JobDetails, Location
 
@@ -116,8 +122,9 @@ class LinkedInScraper(BaseScraper):
             "_l": "en_US",
             "start": start,
         }
+        retry = 0
 
-        for retry in range(1, max_retries + 1):
+        while retry < max_retries:
             try:
                 # wait for a free slot in the limiter
                 await self.__limiter.acquire()
@@ -133,11 +140,18 @@ class LinkedInScraper(BaseScraper):
                 response.raise_for_status()
 
                 jobs = self.parse_jobs(response)
-            except (HTTPStatusError, ConnectTimeout, TimeoutException, ConnectError):
+            except (HTTPStatusError, ConnectTimeout, TimeoutException):
                 msg = f"rate limited while getting jobs for {params}"
                 logger.warning(msg)
 
                 await asyncio.sleep(self.RETRY_DELAY * retry)
+                retry += 1
+            except (ConnectError, ReadError):
+                msg = f"connection error while getting jobs for {params}"
+                logger.warning(msg)
+
+                await asyncio.sleep(self.RETRY_DELAY * retry)
+                retry += 1
             except Exception as e:
                 msg = "not explicitly handled exception occurred; please open an issue"
                 logger.error(msg)
@@ -250,8 +264,9 @@ class LinkedInScraper(BaseScraper):
         params = {
             "_l": "en_US",
         }
+        retry = 0
 
-        for retry in range(1, max_retries + 1):
+        while retry < max_retries:
             try:
                 # wait for a free slot in the limiter
                 await self.__limiter.acquire()
@@ -271,12 +286,18 @@ class LinkedInScraper(BaseScraper):
                 ConnectTimeout,
                 TimeoutException,
                 LinkedInBadPageError,
-                ConnectError,
             ):
                 msg = f"rate limited while getting job details from {job.link}"
                 logger.warning(msg)
 
                 await asyncio.sleep(self.RETRY_DELAY * retry)
+                retry += 1
+            except (ConnectError, ReadError):
+                msg = f"connection error while getting job details from {job.link}"
+                logger.warning(msg)
+
+                await asyncio.sleep(self.RETRY_DELAY * retry)
+                retry += 1
             except Exception as e:
                 msg = "not explicitly handled exception occurred; please open an issue"
                 logger.error(msg)
