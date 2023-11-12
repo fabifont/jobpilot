@@ -82,7 +82,7 @@ class LinkedInScraper(BaseScraper):
             tasks: list[asyncio.Task[list[Job]]] = []
             for start in range(0, limit, self.RESULTS_PER_PAGE):
                 task = asyncio.create_task(
-                    self.get_jobs(scraper_input, start, max_retries),
+                    self.get_jobs(scraper_input, start, max_retries, retry_delay),
                 )
                 tasks.append(task)
                 self.__starts[task] = start
