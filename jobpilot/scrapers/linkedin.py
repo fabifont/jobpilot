@@ -127,7 +127,7 @@ class LinkedInScraper(BaseScraper):
             "location": scraper_input.location,
             "geoid": scraper_input.geoid,
             "pageNum": 0,
-            "_l": "en_US",
+            "_l": scraper_input.out_language,
             "start": start,
         }
         retry = 0
