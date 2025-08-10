@@ -130,6 +130,7 @@ class LinkedInScraper(BaseScraper):
             "_l": scraper_input.out_language,
             "start": start,
             "f_WT": scraper_input.workplace,
+            "f_E": scraper_input.experience,
         }
         retry = 0
 
