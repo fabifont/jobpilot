@@ -131,6 +131,7 @@ class LinkedInScraper(BaseScraper):
             "start": start,
             "f_WT": scraper_input.workplace,
             "f_E": scraper_input.experience,
+            "f_JT": scraper_input.job_type,
         }
         retry = 0
 

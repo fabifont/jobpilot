@@ -18,9 +18,10 @@ class ScraperInput(BaseModel):
     out_language: str = "en_US"
     workplace: str = "" # f_WT it's to filter for workplace type: "1" for On-site, "2" for Remote , "3" for Hybrid, "" for all types
     experience: str = "" # f_E it's to filter for senority type: "1" for Internship, "2" for Entry level, "3" for Associate, "4" for Mid-Senior, "5" for Director, "6" for Executive, "" for all types
+    job_type: str = "" # f_JT it's to filter for job type: "F" for Full-time, "P" for Part-time, "C" for Contract "T" for Temporary, "I" for Internship, "V" for Volunteer, "" for all types
 
     def __hash__(self) -> int:
-        return hash((self.keywords, self.location, self.limit, self.geoid, self.out_language, self.workplace, self.experience))
+        return hash((self.keywords, self.location, self.limit, self.geoid, self.out_language, self.workplace, self.experience, self.job_type))
 
 
 class BaseScraper(ABC):
