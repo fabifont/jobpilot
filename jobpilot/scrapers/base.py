@@ -14,9 +14,10 @@ class ScraperInput(BaseModel):
     keywords: str
     location: str
     limit: int
+    geoid: str = "" # it's a specific linkedin parameter to localize ip, using an italian geoid you can write country and city names in Italian
 
     def __hash__(self) -> int:
-        return hash((self.keywords, self.location, self.limit))
+        return hash((self.keywords, self.location, self.limit, self.geoid))
 
 
 class BaseScraper(ABC):

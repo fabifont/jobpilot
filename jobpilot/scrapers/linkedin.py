@@ -125,6 +125,7 @@ class LinkedInScraper(BaseScraper):
         params = {
             "keywords": scraper_input.keywords,
             "location": scraper_input.location,
+            "geoid": scraper_input.geoid,
             "pageNum": 0,
             "_l": "en_US",
             "start": start,
