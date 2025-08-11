@@ -14,10 +14,16 @@ class ScraperInput(BaseModel):
     keywords: str
     location: str
     limit: int
+    geoid: str = "" # it's a specific linkedin parameter to localize ip, using an italian geoid you can write country and city names in Italian
+    out_language: str = "en_US"
+    workplace: str = "" # f_WT it's to filter for workplace type: "1" for On-site, "2" for Remote , "3" for Hybrid, "" for all types
+    experience: str = "" # f_E it's to filter for senority type: "1" for Internship, "2" for Entry level, "3" for Associate, "4" for Mid-Senior, "5" for Director, "6" for Executive, "" for all types
+    job_type: str = "" # f_JT it's to filter for job type: "F" for Full-time, "P" for Part-time, "C" for Contract "T" for Temporary, "I" for Internship, "V" for Volunteer, "" for all types
+    time_posted: str = "" # f_TPR it's to filter for time posted: "r3600" for last hour pubblished, "" for all time posted
+    company: str = "" # f_C it's to filter for company: "1035" for Microsoft, "1038" for Deloitte, "1035,1038" to show both Microsoft and Deloitte positions, "" for all companies
 
     def __hash__(self) -> int:
-        return hash((self.keywords, self.location, self.limit))
-
+        return hash((self.keywords, self.location, self.limit, self.geoid, self.out_language, self.workplace, self.experience, self.job_type, self.time_posted, self.company))
 
 class BaseScraper(ABC):
     def __init__(self) -> None:
